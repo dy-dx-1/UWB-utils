@@ -40,12 +40,18 @@ from pathlib import Path
 import sys
 import time
 
+# The anchor firmware rejects configuration updates in TWR mode unless the source address is 0.
+# Keeping this explicit so it is obvious that the config packets intentionally use the global zero address.
+SOURCE_ADDR = 0 
+
 LPP_SHORT_TAG = 0xF0
 LPP_SHORT_ANCHOR_POSITION = 0x01
 LPP_SHORT_REBOOT = 0x02
 LPP_SHORT_MODE = 0x03
 LPP_SHORT_UWB = 0x04
 LPP_SHORT_UWB_MODE = 0x05
+
+gen_cfg_msg_header = lambda target_id: [0x41, 0xDC, 0x00, 0xCF, 0xBC] + list(target_id.to_bytes(6, 'little') + b'\xcf\xbc') + list(SOURCE_ADDR.to_bytes(6, 'little') + b'\xcf\xbc') + [LPP_SHORT_TAG]
 
 # Add parent directory to sys.path
 parent_dir = str(Path(__file__).resolve().parent.parent)
@@ -61,13 +67,11 @@ def build_uwb_power_payload(smart_tx_power: int, force_tx_power: int, tx_power: 
     tx_power = int(tx_power) & 0xFFFFFFFF
     return [flags] + list(tx_power.to_bytes(4, 'little'))
 
-
 def build_uwb_radio_payload(low_bitrate: int, long_preamble: int) -> list[int]:
     low_bitrate = int(bool(low_bitrate)) & 0x01
     long_preamble = int(bool(long_preamble)) & 0x01
     flags = (long_preamble << 1) | low_bitrate
     return [flags]
-
 
 def build_config_messages() -> list[list[int]]:
     to_send: list[list[int]] = []
@@ -98,8 +102,45 @@ def build_config_messages() -> list[list[int]]:
 
     return to_send
 
+def confirm_mode_changed(id, mode:Literal[1,2,3])->bool: 
+    """
+    Confirms if an anchor's mode was indeed changed as expected. 
+    NOTE TODO: Currently only supporting TWR and TDOA3 - look in firmware to implement TDOA2 if needed. 
+    """
+    def validate_heard_msg(exp_src, exp_dest, exp_type): 
+        ## Listens for 100ms to see if we receive a specific message
+        exp_src_addr = list(exp_src.to_bytes(6, 'little') + b'\xcf\xbc')
+        exp_dest_addr = list(exp_dest.to_bytes(6, 'little') + b'\xcf\xbc')
+        tstart = time.perf_counter() 
+        while (time.perf_counter()-tstart)<0.1: 
+            msg = dw.listen()
+            if not msg: 
+                continue 
+            try:
+                dest_addr = msg[5:13]
+                source_addr = msg[13:21]
+                trans_type = msg[21]
+            except IndexError:
+                continue    
+            if dest_addr==exp_dest_addr and source_addr==exp_src_addr and exp_type==trans_type:
+                return True 
+        return False 
 
+    if mode==1: 
+        # If we want to confirm anchor is in TWR we simply send it a direct POLL and check if it responds 
+        twr_msg = gen_cfg_msg_header(id)[:-1] + [0x01] + [0x01] 
+        dw.transmit(twr_msg, False) 
+        return validate_heard_msg(exp_src=id, exp_dest=0, exp_type=0x02) 
+    elif mode==2: 
+        print("[INFO] Currently not supporting mode validation for TDOA2. Cannot confirm mode was properly changed!")
+    elif mode==3: 
+        # TDOA3 anchor are periodically broadcasting to 0xFF
+        return validate_heard_msg(exp_src=id, exp_dest=0xFF, exp_type=0x30)
+        
+        
 if __name__ == "__main__":
+    CFG_TIMEOUT = 1 # seconds to try to confirm settings changed 
+
     try:
         config_messages = build_config_messages()
     except ValueError as exc:
@@ -111,21 +152,23 @@ if __name__ == "__main__":
             ANCHOR_IDS = [ANCHOR_IDS]
 
         for ANCHOR_ID in ANCHOR_IDS: 
-            # NOTE: SOURCE_ADDR SET TO 0, ELSE ANCHOR FIRMWARE WILL REJECT MODIFS WHEN IN TWR MODE!
-            header = [0x41, 0xDC, 0x00, 0xCF, 0xBC] + list(ANCHOR_ID.to_bytes(6, 'little') + b'\xcf\xbc') + ([0]*6+[0xCF, 0xBC]) + [LPP_SHORT_TAG] 
-            
-            # If the tag is already in TWR mode, an internal check is performed to ensure the ID of the sender matches the latest ID the tag communicated with
+            header = gen_cfg_msg_header(ANCHOR_ID)
+            # If the tag is CURRENTLY in TWR mode, an internal check is performed to ensure the ID of the sender matches the latest ID the tag communicated with
             # Sending a POLL request resets this variable (curr_tag in the firmware), which allows us to set the source address to 0 and have the anchor accept the modifs
             if MODE!=1: 
-                poll = header[:-1] + [0x01] + [0x01]  # sending a random POLL with SEQ 1 to reset curr_tag to 0 in firmware
-                dw.transmit(poll, False) 
+                # This function will send a POLL which will accomplish the curr_tag reset 
+                confirm_mode_changed(ANCHOR_ID, mode=1) 
 
             for cfg in config_messages:
                 msg = header + cfg
-                for _ in range(3):
+                tstart = time.perf_counter() 
+                while (time.perf_counter()-tstart)<CFG_TIMEOUT: 
                     dw.transmit(data=msg, ranging=False)
-                    time.sleep(0.1)
-                time.sleep(0.2)
+                    if confirm_mode_changed(ANCHOR_ID, mode=MODE):
+                        break 
+                else: 
+                    print(f"[WARN] Anchor {ANCHOR_ID}: config for mode {MODE} not confirmed after {CFG_TIMEOUT}s. Try again?")
+                time.sleep(0.1) 
 
             print(f"ANCHOR {ANCHOR_ID} HAS BEEN CONFIGURED:")
             print(f"  anchor_pos      = {ANCHOR_POS}")
