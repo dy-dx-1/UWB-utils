@@ -1,3 +1,4 @@
+from typing import Literal
 """
 This script exploits the function lppHandleShortPacket() in lpp.c from the Loco Positioning nodes firmware
 to change anchor settings without needing a crazyflie or a direct micro-USB connection.
@@ -22,16 +23,16 @@ Flags are documented in the firmware as:
 """
 ########################################## CONFIGURATION AREA - CHANGE THESE PARAMS ##########################################
 # Target anchor - unfortunately can't change ID remotely
-ANCHOR_IDS = [1,2,3,4,5,6,7,8] # can be a single int or a list
+ANCHOR_IDS:list|int = [1,2,3,4,5,6,7,8] 
 
-# Configuration parameters; set to None to leave them unchanged
-ANCHOR_POS = (1,1,1)      # (x, y, z) 
-REBOOT = None          # 1 = reboot to firmware, 2 = reboot to bootloader
-MODE = 1               # 1 = TWR, 2 = TDOA2, 3 = TDOA3
-UWB_POWER = None       # (smart_tx_enabled, force_tx_enabled, 32bit_tx_power_value). Example: Force max power: (0, 1, 0xFFFFFFFF)
+# Configuration parameters; set None to not change
+ANCHOR_POS:None|tuple[int,int,int]                    = (1,1,1)  # (x, y, z) 
+REBOOT:    None|Literal[1,2]                          = None     # 1 = reboot to firmware, 2 = reboot to bootloader
+MODE:      None|Literal[1,2,3]                        = 1        # 1 = TWR, 2 = TDOA2, 3 = TDOA3
+UWB_POWER:None|tuple[Literal[0,1], Literal[0,1], int] = None     # (smart_tx_enabled, force_tx_enabled, 32bit_tx_power_value). Example: Force max power: (0, 1, 0xFFFFFFFF)
 # NOTE: Careful with UWB settings - if you want to change them back, you will have to change the DW1000 settings below 
 # the DW1000 is config'ed by default to match normal operation (0,0). 
-UWB_RADIO = None       # (low_bitrate_enabled, long_preamble_enabled)
+UWB_RADIO:None|tuple[Literal[0,1], Literal[0,1]]      = None       # (low_bitrate_enabled, long_preamble_enabled)
 
 ########################################## CODE - LOGIC BASED ON LOCO POSITIONING NODE FIRMWARE ##########################################
 import struct
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    with DW1000(0, 0, 2, 64, 6.8, 128, 9, True, None) as dw:
+    with DW1000(0, 0, 2, 64, 6, 128, 9, True, None) as dw:
 
         if isinstance(ANCHOR_IDS, int): 
             ANCHOR_IDS = [ANCHOR_IDS]
