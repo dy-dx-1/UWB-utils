@@ -234,7 +234,7 @@ class DW1000:
         
         # Reset done, run our init checks and set speed back to 20MHz
         self.prep_device_for_use() 
-        print("Soft reset of DW1000 completed.", 'info', 'device')
+        #print("Soft reset of DW1000 completed.", 'info', 'device')
 
     def transmit(self, data:list, ranging:bool, timeout:float=0.05)->bool|tuple[bool, int|None]: 
         """
