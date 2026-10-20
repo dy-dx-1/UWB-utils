@@ -112,7 +112,7 @@ def confirm_mode_changed(id, mode:Literal[1,2,3])->bool:
         exp_src_addr = list(exp_src.to_bytes(6, 'little') + b'\xcf\xbc')
         exp_dest_addr = list(exp_dest.to_bytes(6, 'little') + b'\xcf\xbc')
         tstart = time.perf_counter() 
-        while (time.perf_counter()-tstart)<0.1: 
+        while (time.perf_counter()-tstart)<0.3: 
             msg = dw.listen()
             if not msg: 
                 continue 
@@ -170,9 +170,10 @@ if __name__ == "__main__":
                     print(f"[WARN] Anchor {ANCHOR_ID}: config for mode {MODE} not confirmed after {CFG_TIMEOUT}s. Try again?")
                 time.sleep(0.1) 
 
-            print(f"ANCHOR {ANCHOR_ID} HAS BEEN CONFIGURED:")
-            print(f"  anchor_pos      = {ANCHOR_POS}")
-            print(f"  reboot          = {REBOOT}")
-            print(f"  mode            = {MODE}")
-            print(f"  uwb_power       = {UWB_POWER}")
-            print(f"  uwb_radio       = {UWB_RADIO}")
+        print(f"ATTEMPTED CONFIGURATION FOR ANCHORS {ANCHOR_IDS}:")
+        print(f"  anchor_pos      = {ANCHOR_POS}")
+        print(f"  reboot          = {REBOOT}")
+        print(f"  mode            = {MODE}")
+        print(f"  uwb_power       = {UWB_POWER}")
+        print(f"  uwb_radio       = {UWB_RADIO}")
+        print(f"ANCHORS WITH WARNINGS COULD NOT BE CONFIRMED.")
