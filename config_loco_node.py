@@ -161,14 +161,19 @@ if __name__ == "__main__":
 
             for cfg in config_messages:
                 msg = header + cfg
-                tstart = time.perf_counter() 
-                while (time.perf_counter()-tstart)<CFG_TIMEOUT: 
-                    dw.transmit(data=msg, ranging=False)
-                    if confirm_mode_changed(ANCHOR_ID, mode=MODE):
-                        break 
-                else: 
-                    print(f"[WARN] Anchor {ANCHOR_ID}: config for mode {MODE} not confirmed after {CFG_TIMEOUT}s. Try again?")
+                dw.transmit(data=msg, ranging=False)
                 time.sleep(0.1) 
+
+            # Validating if we are in the correct mode at least 
+            tstart = time.perf_counter() 
+            while (time.perf_counter()-tstart)<CFG_TIMEOUT: 
+                if confirm_mode_changed(ANCHOR_ID, mode=MODE):
+                    print("VALIDATED MODE CHANGE FOR ANCHOR: ", ANCHOR_ID)
+                    break 
+                time.sleep(0.1)
+            else: 
+                print(f"[WARN] Anchor {ANCHOR_ID}: config for mode {MODE} not confirmed after {CFG_TIMEOUT}s. Try again?")
+            
 
         print(f"ATTEMPTED CONFIGURATION FOR ANCHORS {ANCHOR_IDS}:")
         print(f"  anchor_pos      = {ANCHOR_POS}")
