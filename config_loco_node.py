@@ -26,7 +26,7 @@ Flags are documented in the firmware as:
 ANCHOR_IDS:list|int = [1,2,3,4,5,6,7,8] 
 
 # Configuration parameters; set None to not change
-ANCHOR_POS:None|tuple[int,int,int]                    = (1,1,1)  # (x, y, z) 
+ANCHOR_POS:None|tuple[int,int,int]                    = None     # (x, y, z) 
 REBOOT:    None|Literal[1,2]                          = None     # 1 = reboot to firmware, 2 = reboot to bootloader
 MODE:      None|Literal[1,2,3]                        = 1        # 1 = TWR, 2 = TDOA2, 3 = TDOA3
 UWB_POWER:None|tuple[Literal[0,1], Literal[0,1], int] = None     # (smart_tx_enabled, force_tx_enabled, 32bit_tx_power_value). Example: Force max power: (0, 1, 0xFFFFFFFF)
@@ -58,7 +58,7 @@ parent_dir = str(Path(__file__).resolve().parent.parent)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from dw_1000 import DW1000
+from dw1000_spi import DW1000
 
 def build_uwb_power_payload(smart_tx_power: int, force_tx_power: int, tx_power: int) -> list[int]:
     smart_tx_power = int(bool(smart_tx_power)) & 0x01
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    with DW1000(0, 0, 2, 64, 6, 128, 9, True, None) as dw:
+    with DW1000(0, 0, 2, 64, 6, 128, 9, True, None, verbose=True) as dw:
 
         if isinstance(ANCHOR_IDS, int): 
             ANCHOR_IDS = [ANCHOR_IDS]

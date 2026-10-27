@@ -26,8 +26,9 @@ position of the tag and dynamically update it.
 ---
 ### Future updates 
 Currently don't have time, but in the future, could: 
-1. Shift `DW1000` into a package
-2. Formalize a `requirements.txt`
+~~1. Shift `DW1000` into a package~~
+~~2. Formalize a `requirements.txt`~~
+2.5. Move BitcrazeTag from clamour to here 
 3. Add verification of changes to TDOA2 in `config_loco_node.py`
 4. Add the possibility to localize with TDOA3 in `dynamic_MIST.py`
 5. Add a simple EKF to `dynamic_MIST.py`
