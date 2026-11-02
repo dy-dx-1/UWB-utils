@@ -1,5 +1,6 @@
 """
-Continuously plots UDP position updates in matplotlib using WebAgg.
+Continuously plots UDP position updates in matplotlib using WebAgg. 
+This script is designed to be ran on a remote computer through SSH and displayed on a local computer with the web interface
 
 SETUP:
 
@@ -28,6 +29,24 @@ import numpy as np
 
 
 # ============================================================
+# CONFIGURATION
+# ============================================================
+
+REFRESH_RATE = 1.0  # Plot updates per second
+UDP_HOST = "127.0.0.1"
+UDP_PORT = 5005
+SHOW_3D = False
+# Anchor positions in the same units as the coordinates: {anchor_id: (x, y, z)}.
+ANCHORS = {1: (4.736, 2.194, 1.213), 
+           2: (1.373, 5.520, 2.190), 
+           3: (1.372, 0.150, 0.128), 
+           4: (4.736, 2.194, 0.302), 
+           5: (0.793, 2.971, 2.190), 
+           6: (4.582, 6.040, 1.460), 
+           7: (0.223, 0.458, 2.190), 
+           8: (5.045, 4.194, 1.070)} 
+
+# ============================================================
 # MATPLOTLIB WEBAGG CONFIGURATION
 # ============================================================
 
@@ -43,19 +62,6 @@ matplotlib.rcParams["webagg.open_in_browser"] = False
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-REFRESH_RATE = 1.0  # Plot updates per second
-UDP_HOST = "127.0.0.1"
-UDP_PORT = 5005
-SHOW_3D = False
-# Anchor positions in centimeters: {anchor_id: (x, y, z)}.
-ANCHORS = {}
-
 
 # ============================================================
 # SHARED STATE BETWEEN THREADS
