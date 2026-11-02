@@ -8,13 +8,9 @@ SETUP:
 
        ssh -L 8988:127.0.0.1:8988 pi@raspberrypi_ip
 
-2. On the Raspberry Pi, run this script:
+2. On the Raspberry Pi, run this script.
 
-       python3 dynamic_MIST.py
-
-3. On your main computer, open:
-
-       http://localhost:8988/
+3. On your main computer, open: http://localhost:8988/
 
 The positioning process must send each update to the configured UDP
 address as three little-endian float32 values: (x, y, z).
