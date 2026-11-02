@@ -1,6 +1,5 @@
 """
-Continuously positions a DW1000 tag and dynamically plots the position
-in matplotlib using WebAgg.
+Continuously plots UDP position updates in matplotlib using WebAgg.
 
 SETUP:
 
@@ -10,19 +9,20 @@ SETUP:
 
 2. On the Raspberry Pi, run this script:
 
-       python3 your_script.py
+       python3 dynamic_MIST.py
 
 3. On your main computer, open:
 
        http://localhost:8988/
 
-The DW1000 ranging runs in a background thread so that the WebAgg
-server remains responsive.
+The positioning process must send each update to the configured UDP
+address as three little-endian float32 values: (x, y, z).
 """
 
-import sys
+import math
+import socket
+import struct
 import threading
-from pathlib import Path
 
 import numpy as np
 
@@ -44,365 +44,136 @@ matplotlib.rcParams["webagg.open_in_browser"] = False
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from scipy.optimize import least_squares
-
-
-# ============================================================
-# IMPORT YOUR PROJECT
-# ============================================================
-
-parent_dir = str(Path(__file__).resolve().parent.parent)
-
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-from src.clamour.interfaces.bitcraze_tag import BitcrazeTag
-from src.clamour.interfaces.anchors import Anchors
-
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 REFRESH_RATE = 1.0  # Plot updates per second
-
-TAG_ID = 11
-
-DW1000_BUS = 0
-DW1000_CS = 0
-
-CHANNEL = 2
-PRF = 64
-BITRATE = 6.8
-PREAMBLE_LENGTH = 128
-PREAMBLE_CODE = 9
-
-SMART_TX_POWER = True
-TX_POWER_SETTINGS = None
-
-
-# ============================================================
-# TRILATERATION
-# ============================================================
-
-def trilaterate(anchor_positions, distances, initial_position=None):
-    """
-    Estimate a 2D tag position from at least three ranges.
-
-    anchor_positions:
-        Nx2 array containing anchor X/Y positions.
-
-    distances:
-        N-element array containing distances to each anchor.
-
-    Returns:
-        [x, y] estimated position, or None if unsuccessful.
-    """
-
-    anchor_positions = np.asarray(
-        anchor_positions,
-        dtype=float
-    )
-
-    distances = np.asarray(
-        distances,
-        dtype=float
-    )
-
-    if len(anchor_positions) < 3:
-        return None
-
-    if initial_position is None:
-        initial_position = np.mean(
-            anchor_positions,
-            axis=0
-        )
-
-    def residuals(position):
-        estimated_distances = np.linalg.norm(
-            anchor_positions - position,
-            axis=1
-        )
-
-        return estimated_distances - distances
-
-    result = least_squares(
-        residuals,
-        np.asarray(initial_position, dtype=float)
-    )
-
-    if not result.success:
-        return None
-
-    return result.x
-
-
-# ============================================================
-# LOAD ANCHORS
-# ============================================================
-
-print("Loading anchors...")
-
-anchors = Anchors().anchors_dict
-
-anchor_positions = np.array(
-    [
-        anchor[:2]
-        for anchor in anchors.values()
-    ],
-    dtype=float
-)
-
-print()
-print("Anchors:")
-
-for anchor_id, anchor in anchors.items():
-    print(
-        f"  Anchor {anchor_id}: "
-        f"X={anchor[0]}, Y={anchor[1]}"
-    )
-
-print()
+UDP_HOST = "127.0.0.1"
+UDP_PORT = 5005
+SHOW_3D = False
+# Anchor positions in centimeters: {anchor_id: (x, y, z)}.
+ANCHORS = {}
 
 
 # ============================================================
 # SHARED STATE BETWEEN THREADS
 # ============================================================
 
-# The DW1000 thread writes latest_position.
+# The UDP thread writes the newest position.
 # The Matplotlib/WebAgg thread reads it.
-
 latest_position = None
+pending_positions = []
 
 state_lock = threading.Lock()
-
 stop_event = threading.Event()
 
 
 # ============================================================
-# DW1000 RANGING WORKER
+# UDP POSITION RECEIVER
 # ============================================================
 
-def ranging_worker():
-    """
-    Runs continuously in the background.
-
-    This thread does all blocking DW1000 operations.
-    It NEVER directly modifies Matplotlib.
-    """
+def udp_receiver_worker():
+    """Receive one little-endian float32 (x, y, z) tuple per UDP datagram."""
 
     global latest_position
 
-    print("Starting DW1000 ranging worker...")
+    print(f"Listening for position updates on {UDP_HOST}:{UDP_PORT}...")
 
     try:
-
-        with BitcrazeTag(
-            tag_id=TAG_ID,
-            dw1000_bus=DW1000_BUS,
-            dw1000_cs=DW1000_CS,
-            channel=CHANNEL,
-            PRF=PRF,
-            bitrate=BITRATE,
-            preamble_length=PREAMBLE_LENGTH,
-            preamble_code=PREAMBLE_CODE,
-            smart_tx_power=SMART_TX_POWER,
-            tx_power_settings=TX_POWER_SETTINGS,
-        ) as tag:
-
-            print("DW1000 tag initialized.")
-            print()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+            receiver.bind((UDP_HOST, UDP_PORT))
+            receiver.settimeout(0.5)
 
             while not stop_event.is_set():
+                try:
+                    datagram, _ = receiver.recvfrom(1024)
+                except socket.timeout:
+                    continue
 
-                measured_positions = []
-                measured_distances = []
-
-                # ------------------------------------------------
-                # Range to every anchor
-                # ------------------------------------------------
-
-                for anchor_id, anchor_pos in anchors.items():
-
-                    if stop_event.is_set():
-                        break
-
-                    try:
-
-                        distance, _ = tag.compute_range(
-                            anchor_id
-                        )
-
-                    except Exception as exc:
-
-                        print(
-                            f"Range error for anchor "
-                            f"{anchor_id}: {exc}"
-                        )
-
-                        continue
-
-                    if distance is not None:
-
-                        measured_positions.append(
-                            anchor_pos[:2]
-                        )
-
-                        measured_distances.append(
-                            distance
-                        )
-
-                        print(
-                            f"  Anchor {anchor_id}: "
-                            f"{distance:.2f}"
-                        )
-
-                    else:
-
-                        print(
-                            f"  Anchor {anchor_id}: "
-                            f"no range"
-                        )
-
-                # ------------------------------------------------
-                # Check whether we have enough ranges
-                # ------------------------------------------------
-
-                number_of_ranges = len(
-                    measured_positions
-                )
-
-                print(
-                    f"Successful ranges: "
-                    f"{number_of_ranges}/{len(anchors)}"
-                )
-
-                if number_of_ranges >= 3:
-
-                    # --------------------------------------------
-                    # Calculate position
-                    # --------------------------------------------
-
-                    position = trilaterate(
-                        measured_positions,
-                        measured_distances
-                    )
-
-                    if position is not None:
-
-                        position = np.asarray(
-                            position,
-                            dtype=float
-                        )
-
-                        # ----------------------------------------
-                        # Store position for plotting thread
-                        # ----------------------------------------
-
-                        with state_lock:
-
-                            latest_position = position.copy()
-
-                        print(
-                            f"POSITION: "
-                            f"X={position[0]:.2f} cm, "
-                            f"Y={position[1]:.2f} cm"
-                        )
-
-                    else:
-
-                        print(
-                            "Trilateration failed."
-                        )
-
-                else:
-
+                if len(datagram) != struct.calcsize("<fff"):
                     print(
-                        "Not enough valid ranges "
-                        "for trilateration."
+                        "Ignoring UDP position packet: expected "
+                        f"12 bytes, received {len(datagram)}."
                     )
+                    continue
 
-                print()
+                position = struct.unpack("<fff", datagram)
+                if not all(math.isfinite(value) for value in position):
+                    print("Ignoring UDP position packet with non-finite values.")
+                    continue
 
-    except Exception as exc:
+                with state_lock:
+                    latest_position = np.asarray(position, dtype=float)
+                    pending_positions.append(latest_position.copy())
 
-        print()
-        print(
-            "DW1000 worker crashed:"
-        )
-
-        print(exc)
+    except OSError as exc:
+        if not stop_event.is_set():
+            print(f"UDP position receiver failed: {exc}")
 
     finally:
-
-        print(
-            "DW1000 ranging worker stopped."
-        )
+        print("UDP position receiver stopped.")
 
 
 # ============================================================
 # CREATE MATPLOTLIB FIGURE
 # ============================================================
 
-figure, axis = plt.subplots(
-    figsize=(6, 6)
-)
+if SHOW_3D:
+    figure = plt.figure(figsize=(7, 6))
+    axis = figure.add_subplot(111, projection="3d")
+    axis.set_zlabel("Z (cm)")
+else:
+    figure, axis = plt.subplots(figsize=(6, 6))
+    axis.set_aspect("equal", adjustable="datalim")
 
-axis.set_title(
-    "Dynamic DW1000 Tag Position"
-)
+axis.set_title("Dynamic Tag Position")
+axis.set_xlabel("X (cm)")
+axis.set_ylabel("Y (cm)")
 
-axis.set_xlabel(
-    "X (cm)"
-)
-
-axis.set_ylabel(
-    "Y (cm)"
-)
-
-
-# ============================================================
-# DRAW ANCHORS
-# ============================================================
-
-axis.plot(
-    anchor_positions[:, 0],
-    anchor_positions[:, 1],
-    "b*",
-    markersize=12,
-    label="Anchors"
-)
+if ANCHORS:
+    anchor_positions = np.asarray(list(ANCHORS.values()), dtype=float)
+    if SHOW_3D:
+        axis.plot(
+            anchor_positions[:, 0],
+            anchor_positions[:, 1],
+            anchor_positions[:, 2],
+            "b*",
+            markersize=12,
+            label="Anchors",
+        )
+    else:
+        axis.plot(
+            anchor_positions[:, 0],
+            anchor_positions[:, 1],
+            "b*",
+            markersize=12,
+            label="Anchors",
+        )
 
 
 # ============================================================
 # TRAJECTORY
 # ============================================================
 
-axis.set_aspect(
-    "equal",
-    adjustable="datalim"
-)
-
-trajectory_line, = axis.plot(
-    [],
-    [],
-    "r-",
-    linewidth=1.5,
-    label="Trajectory"
-)
-
-position_point, = axis.plot(
-    [],
-    [],
-    "ro",
-    markersize=6,
-    label="Tag"
-)
+if SHOW_3D:
+    trajectory_line, = axis.plot(
+        [], [], [], "r-", linewidth=1.5, label="Trajectory"
+    )
+    position_point, = axis.plot(
+        [], [], [], "ro", markersize=6, label="Tag"
+    )
+else:
+    trajectory_line, = axis.plot(
+        [], [], "r-", linewidth=1.5, label="Trajectory"
+    )
+    position_point, = axis.plot(
+        [], [], "ro", markersize=6, label="Tag"
+    )
 
 axis.legend()
 
-
-# Stores all positions seen by the plotting thread.
 trajectory = []
 
 
@@ -411,81 +182,49 @@ trajectory = []
 # ============================================================
 
 def update_plot(frame):
-    """
-    Called periodically by Matplotlib's event loop.
-
-    IMPORTANT:
-    This runs in the WebAgg/main thread.
-
-    It reads the latest position produced by the DW1000
-    background thread and updates the plot.
-    """
-
-    global trajectory
-
-    # ----------------------------------------------------------
-    # Safely copy the latest position
-    # ----------------------------------------------------------
+    """Read the latest UDP position and update the plot in the WebAgg thread."""
 
     with state_lock:
-
-        if latest_position is None:
-            position = None
-
-        else:
-            position = latest_position.copy()
-
-    # ----------------------------------------------------------
-    # No position yet
-    # ----------------------------------------------------------
+        position = None if latest_position is None else latest_position.copy()
+        new_positions = [update.copy() for update in pending_positions]
+        pending_positions.clear()
 
     if position is None:
+        return trajectory_line, position_point
 
-        return (
-            trajectory_line,
-            position_point,
+    if new_positions:
+        trajectory.extend(new_positions)
+        trajectory_array = np.asarray(trajectory)
+        if SHOW_3D:
+            trajectory_line.set_data_3d(
+                trajectory_array[:, 0],
+                trajectory_array[:, 1],
+                trajectory_array[:, 2],
+            )
+            axis.auto_scale_xyz(
+                trajectory_array[:, 0],
+                trajectory_array[:, 1],
+                trajectory_array[:, 2],
+            )
+        else:
+            trajectory_line.set_data(
+                trajectory_array[:, 0],
+                trajectory_array[:, 1],
+            )
+            axis.relim()
+            axis.autoscale_view()
+
+    if SHOW_3D:
+        position_point.set_data_3d(
+            [position[0]],
+            [position[1]],
+            [position[2]],
         )
+    else:
+        position_point.set_data([position[0]], [position[1]])
+        axis.set_title(f"Dynamic Tag Position (Z={position[2]:.2f} cm)")
 
-    # ----------------------------------------------------------
-    # Add position to trajectory
-    # ----------------------------------------------------------
-
-    trajectory.append(position)
-
-    trajectory_array = np.asarray(
-        trajectory
-    )
-
-    # ----------------------------------------------------------
-    # Update trajectory line
-    # ----------------------------------------------------------
-
-    trajectory_line.set_data(
-        trajectory_array[:, 0],
-        trajectory_array[:, 1]
-    )
-
-    # ----------------------------------------------------------
-    # Update current position marker
-    # ----------------------------------------------------------
-
-    position_point.set_data(
-        [position[0]],
-        [position[1]]
-    )
-
-    # ----------------------------------------------------------
-    # Update axes
-    # ----------------------------------------------------------
-
-    axis.relim()
-
-    axis.autoscale_view()
-
-    return (
-        trajectory_line,
-        position_point,
-    )
+    return trajectory_line, position_point
 
 
 # ============================================================
@@ -495,22 +234,20 @@ def update_plot(frame):
 animation = FuncAnimation(
     figure,
     update_plot,
-    interval=int(
-        1000 / REFRESH_RATE
-    ),
+    interval=int(1000 / REFRESH_RATE),
     blit=False,
     cache_frame_data=False,
 )
 
 
 # ============================================================
-# START DW1000 THREAD
+# START UDP RECEIVER THREAD
 # ============================================================
 
 worker = threading.Thread(
-    target=ranging_worker,
+    target=udp_receiver_worker,
     daemon=True,
-    name="DW1000-Ranging"
+    name="UDP-Position-Receiver",
 )
 
 worker.start()
@@ -531,6 +268,8 @@ print()
 print(" SSH tunnel should be:")
 print()
 print(" ssh -L 8988:127.0.0.1:8988 pi@RASPBERRY_PI_IP")
+print()
+print(f" UDP position input: {UDP_HOST}:{UDP_PORT} (3 little-endian float32 values)")
 print("==============================================")
 print()
 
@@ -540,39 +279,20 @@ print()
 # ============================================================
 
 try:
-
-    # IMPORTANT:
-    #
-    # WebAgg owns the main thread.
-    #
-    # The DW1000 ranging is running in the background,
-    # so WebAgg can continuously process browser requests.
-
+    # WebAgg owns the main thread; the UDP receiver runs in the background.
     plt.show()
 
 except KeyboardInterrupt:
-
     print()
     print("Ctrl-C received.")
 
 finally:
-
     print()
     print("Stopping...")
 
-    # Tell DW1000 thread to stop.
     stop_event.set()
+    worker.join(timeout=5)
 
-    # Give it a few seconds to finish.
-    worker.join(
-        timeout=5
-    )
+    plt.close("all")
 
-    # Close Matplotlib.
-    plt.close(
-        "all"
-    )
-
-    print(
-        "Stopped."
-    )
+    print("Stopped.")

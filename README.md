@@ -18,10 +18,16 @@ Requires a SPI connection with a DW1000 module / a Loco Positioning Deck.
 
 **NOTE:** As of 2026-10-13, I haven't added the functionality to verify that changes to the TDOA2 mode took place. Run the code multiple times if you want to be sure. 
 ### dynamic_MIST.py 
-Dynamic visualizer of 3D positioning at the MIST Lab with TWR on headless devices. 
+Dynamic visualizer of position updates at the MIST Lab on headless devices.
 
 Run the code on a device where you have SSH access and then connect to the 8988 port on your main machine. A webserver will show the current 
-position of the tag and dynamically update it. 
+position and dynamically update its trajectory. The script no longer performs UWB ranging or positioning; another program on the same device
+must send a UDP datagram to `127.0.0.1:5005` for each update. Each datagram must contain exactly three little-endian float32 values in
+`(x, y, z)` order (12 bytes), for example `struct.pack("<fff", x, y, z)` in Python.
+
+Set `SHOW_3D` near the top of `dynamic_MIST.py` to `True` for a 3D plot. In its default `False` mode, it displays the XY trajectory and
+includes the current Z coordinate in the title. Configure anchor positions in the `ANCHORS` dict in `dynamic_MIST.py` using
+`{anchor_id: (x, y, z)}`; it is empty by default. Anchors are shown as blue stars (at their X/Y coordinates in 2D mode).
 
 ---
 ### Future updates 
@@ -30,5 +36,3 @@ Currently don't have time, but in the future, could:
 ~~2. Formalize a `requirements.txt`~~
 2.5. Move BitcrazeTag from clamour to here 
 3. Add verification of changes to TDOA2 in `config_loco_node.py`
-4. Add the possibility to localize with TDOA3 in `dynamic_MIST.py`
-5. Add a simple EKF to `dynamic_MIST.py`
