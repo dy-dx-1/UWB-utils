@@ -25,8 +25,9 @@ position and dynamically update each tag's trajectory. Another program on the sa
 must send a UDP datagram to `127.0.0.1:5005` for each update. Each datagram must contain a little-endian int32 tag ID followed by three little-endian
 float32 coordinates in `(id, x, y, z)` order (16 bytes), for example `struct.pack("<ifff", tag_id, x, y, z)` in Python. All data is expected to represent a valid position, if your positioning doesn't converge, do not send anything. 
 
-Set `SHOW_3D` near the top of `dynamic_MIST.py` to `True` for a 3D plot. In its default `False` mode, it displays each tag's XY trajectory and
-includes the latest tag ID and Z coordinate in the title. Each tag is assigned a distinct color and listed in the legend as `Tag {id}`.
+Set `SHOW_3D` near the top of `dynamic_MIST.py` to `True` for a 3D plot. Set `SHOW_TRAJECTORY` to `False` to display only each tag's most
+recent position as a small marker; when `True`, the plot also shows each tag's full trajectory. In 2D mode, the latest tag ID and Z coordinate
+appear in the title. Each tag is assigned a distinct color and listed in the legend as `Tag {id}`.
 Configure anchor positions in the `ANCHORS` dict in `dynamic_MIST.py` using `{anchor_id: (x, y, z)}`; anchors are shown as blue stars
 (at their X/Y coordinates in 2D mode).
 

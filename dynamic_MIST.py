@@ -34,6 +34,7 @@ REFRESH_RATE = 1.0  # Plot updates per second
 UDP_HOST = "127.0.0.1"
 UDP_PORT = 5005
 SHOW_3D = False
+SHOW_TRAJECTORY = True
 # Anchor positions in the same units as the coordinates: {anchor_id: (x, y, z)}.
 ANCHORS = {1: (4.736, 2.194, 1.213), 
            2: (1.373, 5.520, 2.190), 
@@ -190,39 +191,39 @@ def update_plot(frame):
         if tag_id not in tag_trajectories:
             color = next(tag_colors)
             tag_trajectories[tag_id] = []
-            if SHOW_3D:
-                tag_lines[tag_id], = axis.plot(
-                    [], [], [], color=color, linewidth=1.5, label="_nolegend_"
-                )
-                tag_points[tag_id], = axis.plot(
-                    [], [], [], "o", color=color, markersize=6,
-                    label=f"Tag {tag_id}",
-                )
-            else:
-                tag_lines[tag_id], = axis.plot(
-                    [], [], color=color, linewidth=1.5, label="_nolegend_"
-                )
-                tag_points[tag_id], = axis.plot(
-                    [], [], "o", color=color, markersize=6,
-                    label=f"Tag {tag_id}",
-                )
+            if SHOW_TRAJECTORY:
+                if SHOW_3D:
+                    tag_lines[tag_id], = axis.plot(
+                        [], [], [], color=color, linewidth=1.5, label="_nolegend_"
+                    )
+                else:
+                    tag_lines[tag_id], = axis.plot(
+                        [], [], color=color, linewidth=1.5, label="_nolegend_"
+                    )
+            tag_points[tag_id], = axis.plot(
+                [], [], "o", color=color,
+                markersize=6 if SHOW_TRAJECTORY else 4,
+                label=f"Tag {tag_id}",
+            )
             axis.legend()
 
-        tag_trajectories[tag_id].append(position)
+        if SHOW_TRAJECTORY:
+            tag_trajectories[tag_id].append(position)
 
-    for tag_id, trajectory in tag_trajectories.items():
-        trajectory_array = np.asarray(trajectory)
-        if SHOW_3D:
-            tag_lines[tag_id].set_data_3d(
-                trajectory_array[:, 0],
-                trajectory_array[:, 1],
-                trajectory_array[:, 2],
-            )
-        else:
-            tag_lines[tag_id].set_data(
-                trajectory_array[:, 0],
-                trajectory_array[:, 1],
-            )
+    if SHOW_TRAJECTORY:
+        for tag_id, trajectory in tag_trajectories.items():
+            trajectory_array = np.asarray(trajectory)
+            if SHOW_3D:
+                tag_lines[tag_id].set_data_3d(
+                    trajectory_array[:, 0],
+                    trajectory_array[:, 1],
+                    trajectory_array[:, 2],
+                )
+            else:
+                tag_lines[tag_id].set_data(
+                    trajectory_array[:, 0],
+                    trajectory_array[:, 1],
+                )
 
     for tag_id, position in positions.items():
         if SHOW_3D:
@@ -241,12 +242,22 @@ def update_plot(frame):
         )
 
     if SHOW_3D:
-        all_trajectory_points = [
-            np.asarray(trajectory)
-            for trajectory in tag_trajectories.values()
-        ]
-        if all_trajectory_points:
-            all_points = np.concatenate(all_trajectory_points)
+        if SHOW_TRAJECTORY:
+            trajectories = [
+                np.asarray(trajectory)
+                for trajectory in tag_trajectories.values()
+                if trajectory
+            ]
+            all_points = (
+                np.concatenate(trajectories)
+                if trajectories
+                else np.empty((0, 3))
+            )
+        elif positions:
+            all_points = np.asarray(list(positions.values()))
+        else:
+            all_points = np.empty((0, 3))
+        if len(all_points):
             axis.auto_scale_xyz(all_points[:, 0], all_points[:, 1], all_points[:, 2])
     else:
         if new_positions:
