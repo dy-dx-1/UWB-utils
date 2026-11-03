@@ -11,4 +11,5 @@ pyparsing==3.3.3
 python-dateutil==3.0.0
 six==1.17.0
 spidev==3.8
+tornado==6.6
 tzdata==2026.5
