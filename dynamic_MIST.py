@@ -13,9 +13,11 @@ SETUP:
 3. On your main computer, open: http://localhost:8988/
 
 The positioning process must send each update to the configured UDP
-address as three little-endian float32 values: (x, y, z).
+address as a little-endian int32 tag ID followed by three float32 coordinates:
+(id, x, y, z), packed with ``<ifff``.
 """
 
+import itertools
 import math
 import socket
 import struct
@@ -63,9 +65,9 @@ from matplotlib.animation import FuncAnimation
 # SHARED STATE BETWEEN THREADS
 # ============================================================
 
-# The UDP thread writes the newest position.
+# The UDP thread writes the newest position for each tag.
 # The Matplotlib/WebAgg thread reads it.
-latest_position = None
+latest_positions = {}
 pending_positions = []
 
 state_lock = threading.Lock()
@@ -77,9 +79,7 @@ stop_event = threading.Event()
 # ============================================================
 
 def udp_receiver_worker():
-    """Receive one little-endian float32 (x, y, z) tuple per UDP datagram."""
-
-    global latest_position
+    """Receive one little-endian int32/float32 (id, x, y, z) tuple per datagram."""
 
     print(f"Listening for position updates on {UDP_HOST}:{UDP_PORT}...")
 
@@ -94,21 +94,22 @@ def udp_receiver_worker():
                 except socket.timeout:
                     continue
 
-                if len(datagram) != struct.calcsize("<fff"):
+                if len(datagram) != struct.calcsize("<ifff"):
                     print(
                         "Ignoring UDP position packet: expected "
-                        f"12 bytes, received {len(datagram)}."
+                        f"16 bytes, received {len(datagram)}."
                     )
                     continue
 
-                position = struct.unpack("<fff", datagram)
+                tag_id, x, y, z = struct.unpack("<ifff", datagram)
+                position = (x, y, z)
                 if not all(math.isfinite(value) for value in position):
                     print("Ignoring UDP position packet with non-finite values.")
                     continue
 
                 with state_lock:
-                    latest_position = np.asarray(position, dtype=float)
-                    pending_positions.append(latest_position.copy())
+                    latest_positions[tag_id] = np.asarray(position, dtype=float)
+                    pending_positions.append((tag_id, latest_positions[tag_id].copy()))
 
     except OSError as exc:
         if not stop_event.is_set():
@@ -156,27 +157,15 @@ if ANCHORS:
 
 
 # ============================================================
-# TRAJECTORY
+# TAG TRAJECTORIES
 # ============================================================
 
-if SHOW_3D:
-    trajectory_line, = axis.plot(
-        [], [], [], "r-", linewidth=1.5, label="Trajectory"
-    )
-    position_point, = axis.plot(
-        [], [], [], "ro", markersize=6, label="Tag"
-    )
-else:
-    trajectory_line, = axis.plot(
-        [], [], "r-", linewidth=1.5, label="Trajectory"
-    )
-    position_point, = axis.plot(
-        [], [], "ro", markersize=6, label="Tag"
-    )
-
-axis.legend()
-
-trajectory = []
+tag_colors = itertools.cycle(matplotlib.rcParams["axes.prop_cycle"].by_key()["color"])
+tag_trajectories = {}
+tag_lines = {}
+tag_points = {}
+if ANCHORS:
+    axis.legend()
 
 
 # ============================================================
@@ -187,46 +176,84 @@ def update_plot(frame):
     """Read the latest UDP position and update the plot in the WebAgg thread."""
 
     with state_lock:
-        position = None if latest_position is None else latest_position.copy()
-        new_positions = [update.copy() for update in pending_positions]
+        positions = {
+            tag_id: position.copy()
+            for tag_id, position in latest_positions.items()
+        }
+        new_positions = [
+            (tag_id, position.copy())
+            for tag_id, position in pending_positions
+        ]
         pending_positions.clear()
 
-    if position is None:
-        return trajectory_line, position_point
+    for tag_id, position in new_positions:
+        if tag_id not in tag_trajectories:
+            color = next(tag_colors)
+            tag_trajectories[tag_id] = []
+            if SHOW_3D:
+                tag_lines[tag_id], = axis.plot(
+                    [], [], [], color=color, linewidth=1.5, label="_nolegend_"
+                )
+                tag_points[tag_id], = axis.plot(
+                    [], [], [], "o", color=color, markersize=6,
+                    label=f"Tag {tag_id}",
+                )
+            else:
+                tag_lines[tag_id], = axis.plot(
+                    [], [], color=color, linewidth=1.5, label="_nolegend_"
+                )
+                tag_points[tag_id], = axis.plot(
+                    [], [], "o", color=color, markersize=6,
+                    label=f"Tag {tag_id}",
+                )
+            axis.legend()
 
-    if new_positions:
-        trajectory.extend(new_positions)
+        tag_trajectories[tag_id].append(position)
+
+    for tag_id, trajectory in tag_trajectories.items():
         trajectory_array = np.asarray(trajectory)
         if SHOW_3D:
-            trajectory_line.set_data_3d(
-                trajectory_array[:, 0],
-                trajectory_array[:, 1],
-                trajectory_array[:, 2],
-            )
-            axis.auto_scale_xyz(
+            tag_lines[tag_id].set_data_3d(
                 trajectory_array[:, 0],
                 trajectory_array[:, 1],
                 trajectory_array[:, 2],
             )
         else:
-            trajectory_line.set_data(
+            tag_lines[tag_id].set_data(
                 trajectory_array[:, 0],
                 trajectory_array[:, 1],
             )
+
+    for tag_id, position in positions.items():
+        if SHOW_3D:
+            tag_points[tag_id].set_data_3d(
+                [position[0]],
+                [position[1]],
+                [position[2]],
+            )
+        else:
+            tag_points[tag_id].set_data([position[0]], [position[1]])
+
+    if new_positions and not SHOW_3D:
+        tag_id, position = new_positions[-1]
+        axis.set_title(
+            f"Dynamic Tag Position (Tag {tag_id}, Z={position[2]:.2f} cm)"
+        )
+
+    if SHOW_3D:
+        all_trajectory_points = [
+            np.asarray(trajectory)
+            for trajectory in tag_trajectories.values()
+        ]
+        if all_trajectory_points:
+            all_points = np.concatenate(all_trajectory_points)
+            axis.auto_scale_xyz(all_points[:, 0], all_points[:, 1], all_points[:, 2])
+    else:
+        if new_positions:
             axis.relim()
             axis.autoscale_view()
 
-    if SHOW_3D:
-        position_point.set_data_3d(
-            [position[0]],
-            [position[1]],
-            [position[2]],
-        )
-    else:
-        position_point.set_data([position[0]], [position[1]])
-        axis.set_title(f"Dynamic Tag Position (Z={position[2]:.2f} cm)")
-
-    return trajectory_line, position_point
+    return tuple(tag_lines.values()) + tuple(tag_points.values())
 
 
 # ============================================================
@@ -271,7 +298,7 @@ print(" SSH tunnel should be:")
 print()
 print(" ssh -L 8988:127.0.0.1:8988 pi@RASPBERRY_PI_IP")
 print()
-print(f" UDP position input: {UDP_HOST}:{UDP_PORT} (3 little-endian float32 values)")
+print(f" UDP position input: {UDP_HOST}:{UDP_PORT} (<ifff: int32 ID, 3 float32 coordinates)")
 print("==============================================")
 print()
 

@@ -21,18 +21,16 @@ Requires a SPI connection with a DW1000 module / a Loco Positioning Deck.
 Dynamic visualizer of position updates at the MIST Lab on headless devices.
 
 Run the code on a device where you have SSH access and then connect to the 8988 port on your main machine. A webserver will show the current 
-position and dynamically update its trajectory. The script no longer performs UWB ranging or positioning; another program on the same device
-must send a UDP datagram to `127.0.0.1:5005` for each update. Each datagram must contain exactly three little-endian float32 values in
-`(x, y, z)` order (12 bytes), for example `struct.pack("<fff", x, y, z)` in Python.
+position and dynamically update each tag's trajectory. Another program on the same device must
+must send a UDP datagram to `127.0.0.1:5005` for each update. Each datagram must contain a little-endian int32 tag ID followed by three little-endian
+float32 coordinates in `(id, x, y, z)` order (16 bytes), for example `struct.pack("<ifff", tag_id, x, y, z)` in Python. All data is expected to represent a valid position, if your positioning doesn't converge, do not send anything. 
 
-Set `SHOW_3D` near the top of `dynamic_MIST.py` to `True` for a 3D plot. In its default `False` mode, it displays the XY trajectory and
-includes the current Z coordinate in the title. Configure anchor positions in the `ANCHORS` dict in `dynamic_MIST.py` using
-`{anchor_id: (x, y, z)}`; it is empty by default. Anchors are shown as blue stars (at their X/Y coordinates in 2D mode).
+Set `SHOW_3D` near the top of `dynamic_MIST.py` to `True` for a 3D plot. In its default `False` mode, it displays each tag's XY trajectory and
+includes the latest tag ID and Z coordinate in the title. Each tag is assigned a distinct color and listed in the legend as `Tag {id}`.
+Configure anchor positions in the `ANCHORS` dict in `dynamic_MIST.py` using `{anchor_id: (x, y, z)}`; anchors are shown as blue stars
+(at their X/Y coordinates in 2D mode).
 
 ---
 ### Future updates 
 Currently don't have time, but in the future, could: 
-~~1. Shift `DW1000` into a package~~
-~~2. Formalize a `requirements.txt`~~
-2.5. Move BitcrazeTag from clamour to here 
-3. Add verification of changes to TDOA2 in `config_loco_node.py`
+- Add verification of changes to TDOA2 in `config_loco_node.py`
